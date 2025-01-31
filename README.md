@@ -28,3 +28,27 @@ you can use the following variables:
 - `${start}` - the start menu directory `like: D:\Users\user\AppData\Roaming\Microsoft\Windows\Start Menu\PortableApps`
 - `${base}` - the directory where the portable.yaml file is located
 - more variables can find in [portable.go](portable.go)
+
+install
+
+```bash
+> go build -trimpath -ldflags '-s -w' -v github.com/cnk3x/portable/cmd/mkp
+
+> mkp -h
+manage portable app
+
+Usage:
+  mkp.exe [command]
+
+Available Commands:
+  install     install portable app
+  list        list portable app
+  uninstall   uninstall portable app
+
+Flags:
+  -d, --debug     debug output
+  -h, --help      help for mkp.exe
+  -v, --verbose   verbose output
+
+Use "mkp.exe [command] --help" for more information about a command.
+```
