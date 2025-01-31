@@ -1,0 +1,10 @@
+bind:
+  - '${Roaming}\my_app'
+  - '${Document}\my_app'
+
+shortcut:
+  - name: My App
+    target: '${Roaming}\App\my_app.exe'
+    workdir: '${Roaming}\App'
+    args: "--hello world"
+    category: "My Apps"
