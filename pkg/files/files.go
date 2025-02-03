@@ -26,49 +26,49 @@ func WalkDir(root string, fn fs.WalkDirFunc, maxDepth ...int) (err error) {
 	if info, err = os.Lstat(root); err != nil {
 		err = fn(root, nil, err)
 	} else {
-		err = walkDir(root, fs.FileInfoToDirEntry(info), fn, cmp.Or(cmp.Or(maxDepth...), -1), 0)
+		maxDepth := cmp.Or(cmp.Or(maxDepth...), -1)
+		walkDir := (func(string, fs.DirEntry, int) error)(nil)
+		walkDir = func(path string, d fs.DirEntry, depth int) (err error) {
+			if maxDepth != -1 && depth > maxDepth {
+				return nil
+			}
+
+			if err = fn(path, d, nil); err != nil || !d.IsDir() {
+				if err == fs.SkipDir && d.IsDir() {
+					err = nil // Successfully skipped directory.
+				}
+				return // 如果有错误或者非文件夹，返回
+			}
+
+			var dirs []fs.DirEntry
+
+			if dirs, err = os.ReadDir(path); err != nil {
+				// Second call, to report ReadDir error.
+				if err = fn(path, d, err); err != nil {
+					if err == fs.SkipDir && d.IsDir() {
+						err = nil
+					}
+					return
+				}
+			}
+
+			for _, d := range dirs {
+				if err = walkDir(filepath.Join(path, d.Name()), d, depth+1); err != nil {
+					if err == fs.SkipDir {
+						err = nil
+						break
+					}
+					return
+				}
+			}
+
+			return
+		}
+		err = walkDir(root, fs.FileInfoToDirEntry(info), 0)
 	}
 	if err == fs.SkipDir || err == fs.SkipAll {
 		err = nil
 	}
-	return
-}
-
-func walkDir(path string, d fs.DirEntry, fn fs.WalkDirFunc, maxDepth, depth int) (err error) {
-	if maxDepth != -1 && depth > maxDepth {
-		return nil
-	}
-
-	if err = fn(path, d, nil); err != nil || !d.IsDir() {
-		if err == fs.SkipDir && d.IsDir() {
-			// Successfully skipped directory.
-			err = nil
-		}
-		return // 如果有错误或者非文件夹，返回
-	}
-
-	var dirs []fs.DirEntry
-
-	if dirs, err = os.ReadDir(path); err != nil {
-		// Second call, to report ReadDir error.
-		if err = fn(path, d, err); err != nil {
-			if err == fs.SkipDir && d.IsDir() {
-				err = nil
-			}
-			return
-		}
-	}
-
-	for _, d := range dirs {
-		if err = walkDir(filepath.Join(path, d.Name()), d, fn, maxDepth, depth+1); err != nil {
-			if err == fs.SkipDir {
-				err = nil
-				break
-			}
-			return
-		}
-	}
-
 	return
 }
 

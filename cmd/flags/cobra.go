@@ -6,6 +6,8 @@ import (
 )
 
 type (
+	// FlagSet flag set
 	FlagSet = pflag.FlagSet
+	// Command command
 	Command = cobra.Command
 )

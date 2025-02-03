@@ -13,6 +13,7 @@ func init() {
 	rootCmd.CompletionOptions.HiddenDefaultCmd = true
 }
 
+// Execute execute the root command
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		slog.Error("Error", "err", err)
@@ -20,12 +21,14 @@ func Execute() {
 	}
 }
 
+// RootSet set the root command
 func RootSet(options ...Option) {
 	for _, option := range options {
 		option(rootCmd)
 	}
 }
 
+// AddCommand add a command to the root command
 func AddCommand(use string, options ...Option) *Command {
 	c := &Command{Use: use}
 	for _, option := range options {

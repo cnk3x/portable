@@ -4,8 +4,10 @@ import (
 	"cmp"
 )
 
+// Option option
 type Option func(*Command)
 
+// Options options
 func Options(options ...Option) Option {
 	return func(c *Command) {
 		for _, option := range options {

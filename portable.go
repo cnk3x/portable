@@ -8,13 +8,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/adrg/xdg"
 	"github.com/cnk3x/portable/pkg/files"
+	"github.com/cnk3x/portable/pkg/it"
 	"github.com/cnk3x/portable/pkg/shortcuts"
+	"github.com/goccy/go-yaml"
 	"github.com/valyala/fasttemplate"
-	"gopkg.in/yaml.v3"
 )
 
 const CONFIG_FILE_NAME = "portable.yaml"
@@ -64,7 +66,7 @@ func LoadApp(configPath string) (app *PortableApp, err error) {
 		return
 	}
 
-	if err = yaml.Unmarshal(data, app); err != nil {
+	if err = yaml.UnmarshalWithOptions(data, app, yaml.UseJSONUnmarshaler()); err != nil {
 		return
 	}
 
@@ -80,79 +82,54 @@ func LoadApp(configPath string) (app *PortableApp, err error) {
 		desktop = xdg.UserDirs.Desktop
 	)
 
-	xdgTags := [][2]string{
-		{"local", xdg.DataHome},               // D:\Users\user\AppData\Local
-		{"roaming", roaming},                  // D:\Users\user\AppData\Roaming
-		{"home", xdg.Home},                    // D:\Users\user
-		{"programs", xdg.BinHome},             // D:\Users\user\AppData\Local\Programs
-		{"desktop", desktop},                  // D:\Desktop
-		{"document", xdg.UserDirs.Documents},  // D:\Documents
-		{"documents", xdg.UserDirs.Documents}, // D:\Documents
-		{"download", xdg.UserDirs.Download},   // D:\Downloads
-		{"downloads", xdg.UserDirs.Download},  // D:\Downloads
-		{"music", xdg.UserDirs.Music},         // D:\Music
-		{"musics", xdg.UserDirs.Music},        // D:\Music
-		{"picture", xdg.UserDirs.Pictures},    // D:\Pictures
-		{"pictures", xdg.UserDirs.Pictures},   // D:\Pictures
-		{"video", xdg.UserDirs.Videos},        // D:\Videos
-		{"videos", xdg.UserDirs.Videos},       // D:\Videos
-		{"start", start},                      // D:\Users\user\AppData\Roaming\Microsoft\Windows\Start Menu\PortableApps
-		{"base", base},
+	xDict := [][2]string{
+		{"Local", xdg.DataHome},                       // D:\Users\user\AppData\Local
+		{"Roaming", roaming},                          // D:\Users\user\AppData\Roaming
+		{"Home", xdg.Home},                            // D:\Users\user
+		{"Programs", xdg.BinHome},                     // D:\Users\user\AppData\Local\Programs
+		{"ProgramFiles", `C:\Program Files`},          // C:\Program Files
+		{"ProgramFilesX86", `C:\Program Files (x86)`}, // C:\Program Files (x86)
+		{"Desktop", desktop},                          // D:\Desktop
+		{"Document", xdg.UserDirs.Documents},          // D:\Documents
+		{"Documents", xdg.UserDirs.Documents},         // D:\Documents
+		{"Download", xdg.UserDirs.Download},           // D:\Downloads
+		{"Downloads", xdg.UserDirs.Download},          // D:\Downloads
+		{"Music", xdg.UserDirs.Music},                 // D:\Music
+		{"Musics", xdg.UserDirs.Music},                // D:\Music
+		{"Picture", xdg.UserDirs.Pictures},            // D:\Pictures
+		{"Pictures", xdg.UserDirs.Pictures},           // D:\Pictures
+		{"Video", xdg.UserDirs.Videos},                // D:\Videos
+		{"Videos", xdg.UserDirs.Videos},               // D:\Videos
+		{"Start", start},                              // D:\Users\user\AppData\Roaming\Microsoft\Windows\Start Menu\PortableApps
+		{"Base", base},
 	}
 
-	findTag := func(path string) string {
-		for _, v := range xdgTags {
-			if strings.HasPrefix(path, v[1]) {
-				rel := strings.TrimPrefix(path, v[1])
-				name := strings.ToUpper(v[0][:1]) + v[0][1:]
-				return filepath.Join(name, rel)
-			}
-		}
+	// 倒序
+	slices.SortStableFunc(xDict, func(a, b [2]string) int { return strings.Compare(b[1], a[1]) })
 
-		dir, name := filepath.Split(path)
-		return filepath.Join(filepath.Base(dir), name)
-	}
-
-	tplRepl := func() func(s string) string {
-		mapTags := make(map[string]string, len(xdgTags))
-		for _, v := range xdgTags {
-			mapTags[v[0]] = v[1]
-		}
-		tagFunc := func(w io.Writer, tag string) (int, error) {
-			if v := mapTags[strings.TrimSpace(strings.ToLower(tag))]; v != "" {
-				return w.Write([]byte(v))
-			}
-			return 0, nil
-		}
-		return func(s string) string {
-			return fasttemplate.ExecuteFuncString(s, "${", "}", tagFunc)
-		}
-	}()
+	xDictRepl := newXDictRepl(xDict)
 
 	// 快捷方式
-	for i, it := range app.Shortcut {
-		app.Shortcut[i].Name = tplRepl(it.Name)
-		app.Shortcut[i].Target = tplRepl(it.Target)
-		app.Shortcut[i].Workdir = tplRepl(it.Workdir)
-		app.Shortcut[i].Args = tplRepl(it.Args)
+	for i, item := range app.Shortcut {
+		app.Shortcut[i].Name = xDictRepl(item.Name)
+		app.Shortcut[i].Target = xDictRepl(item.Target)
+		app.Shortcut[i].Workdir = xDictRepl(item.Workdir)
+		app.Shortcut[i].Args = xDictRepl(item.Args)
 
-		if len(it.Place) > 0 {
-			for j, place := range it.Place {
-				app.Shortcut[i].Place[j] = tplRepl(place)
-			}
+		if len(item.Place) > 0 {
+			it.ForIndex(item.Place, func(j int) { app.Shortcut[i].Place[j] = xDictRepl(item.Place[j]) })
 		} else {
-			app.Shortcut[i].Place = []string{base, desktop, filepath.Join(start, it.Category)}
+			app.Shortcut[i].Place = []string{base, desktop, filepath.Join(start, item.Category)}
 		}
 	}
 
-	// 绑定目录
-	for i, v := range app.Bind {
-		app.Bind[i] = tplRepl(v)
-	}
+	// 绑定路径
+	targetPath := shortPath(xDict, dataDir)
 
+	// 绑定目录
 	for _, target := range app.Bind {
-		source := filepath.Join(dataDir, findTag(target))
-		app.binds = append(app.binds, [2]string{source, target})
+		target = xDictRepl(target)
+		app.binds = append(app.binds, [2]string{targetPath(target), target})
 	}
 
 	return
@@ -175,7 +152,7 @@ func (app *PortableApp) Uninstall(force bool) (err error) {
 	return
 }
 
-// create symlinks
+// createSymlinks create symlinks
 func createSymlinks(symlinks [][2]string, force bool) (err error) {
 	for _, symlink := range symlinks {
 		source, link := symlink[0], symlink[1]
@@ -193,7 +170,7 @@ func createSymlinks(symlinks [][2]string, force bool) (err error) {
 	return
 }
 
-// remove symlinks
+// removeSymlinks remove symlinks
 func removeSymlinks(symlinks [][2]string, force bool) (err error) {
 	for _, symlink := range symlinks {
 		link := symlink[1]
@@ -208,7 +185,7 @@ func removeSymlinks(symlinks [][2]string, force bool) (err error) {
 	return
 }
 
-// create shortcuts
+// createShortcuts create shortcuts
 func createShortcuts(items []*shortcuts.Shortcut, _ bool) (err error) {
 	return shortcuts.Create(items, func(shortcut *shortcuts.Shortcut, path string, err error) {
 		if err != nil {
@@ -230,7 +207,7 @@ func createShortcuts(items []*shortcuts.Shortcut, _ bool) (err error) {
 	})
 }
 
-// remove shortcuts
+// removeShortcuts remove shortcuts
 func removeShortcuts(items []*shortcuts.Shortcut, force bool) (err error) {
 	return shortcuts.Remove(items, func(shortcut *shortcuts.Shortcut, path string, e error) {
 		if e != nil {
@@ -240,4 +217,41 @@ func removeShortcuts(items []*shortcuts.Shortcut, force bool) (err error) {
 			slog.Debug("remove shortcut", "path", path)
 		}
 	}, force)
+}
+
+// shortPath 替换路径为前缀代号
+func shortPath(xDict [][2]string, root string) func(fullPath string) string {
+	return func(fullPath string) string {
+		var name, rel string
+		if i := slices.IndexFunc(xDict, func(item [2]string) bool { return hasPrefixFold(fullPath, item[1]) }); i >= 0 {
+			name, rel = xDict[i][0], strings.Trim(fullPath[len(xDict[i][1]):], `\/`)
+		} else {
+			dir, fn := filepath.Split(fullPath)
+			name, rel = filepath.Base(dir), fn
+		}
+		return filepath.Join(root, name, rel)
+	}
+}
+
+// newXDictRepl: 变量替换
+func newXDictRepl(xDict [][2]string) func(s string) string {
+	tagFind := func(tag string) func(item [2]string) bool {
+		return func(item [2]string) bool { return strings.EqualFold(tag, item[0]) }
+	}
+
+	return func(s string) string {
+		return fasttemplate.ExecuteFuncString(s, "${", "}", func(w io.Writer, tag string) (int, error) {
+			if tag = strings.TrimSpace(tag); tag != "" {
+				if i := slices.IndexFunc(xDict, tagFind(tag)); i >= 0 {
+					return w.Write([]byte(xDict[i][1]))
+				}
+			}
+			return 0, nil
+		})
+	}
+}
+
+// hasPrefixFold: 不区分大小写的 strings.HasPrefix
+func hasPrefixFold(s string, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[0:len(prefix)], prefix)
 }
