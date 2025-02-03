@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/cnk3x/portable/cmd/flags"
+	"github.com/cnk3x/cl"
 	"github.com/lmittmann/tint"
 	"github.com/mattn/go-isatty"
 )
@@ -13,11 +13,11 @@ import (
 func init() {
 	var verbose bool
 	var debug bool
-	flags.RootSet(flags.PersistentFlags(func(f *flags.FlagSet) {
+	cl.RootSet(cl.PersistentFlags(func(f *cl.FlagSet) {
 		f.BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 		f.BoolVarP(&debug, "debug", "d", false, "debug output")
 	}))
-	flags.RootSet(flags.PersistentPreRun(func() {
+	cl.RootSet(cl.PersistentPreRun(func() {
 		l := slog.LevelInfo
 		if verbose {
 			l = slog.LevelDebug

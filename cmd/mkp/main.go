@@ -4,15 +4,15 @@ import (
 	"cmp"
 	"log/slog"
 
+	"github.com/cnk3x/cl"
 	"github.com/cnk3x/portable"
-	"github.com/cnk3x/portable/cmd/flags"
 
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 )
 
 func main() {
-	flags.RootSet(flags.Description("manage portable app"))
+	cl.RootSet(cl.Description("manage portable app"))
 
 	var (
 		force bool
@@ -20,18 +20,18 @@ func main() {
 		depth int = 3
 	)
 
-	commandFlag := flags.Flags(
-		flags.Val(&force, "force", "f", "if true, force to del the bind target, if false, only del the symlink"),
-		flags.Val(&all, "all", "a", "install all apps in the current directory"),
-		flags.Val(&depth, "depth", "d", "depth of directory"),
+	commandFlag := cl.Flags(
+		cl.Val(&force, "force", "f", "if true, force to del the bind target, if false, only del the symlink"),
+		cl.Val(&all, "all", "a", "install all apps in the current directory"),
+		cl.Val(&depth, "depth", "d", "depth of directory"),
 	)
 
-	flags.AddCommand(
+	cl.AddCommand(
 		"install",
-		flags.Aliases("i", "add"),
-		flags.Description("install portable app"),
+		cl.Aliases("i", "add"),
+		cl.Description("install portable app"),
 		commandFlag,
-		flags.Run(func(c *cobra.Command, apps []string) {
+		cl.Run(func(c *cobra.Command, apps []string) {
 			if all {
 				apps = portable.FindDirs(cmp.Or(cmp.Or(apps...), "."), depth)
 			} else if len(apps) == 0 {
@@ -51,12 +51,12 @@ func main() {
 		}),
 	)
 
-	flags.AddCommand(
+	cl.AddCommand(
 		"uninstall",
-		flags.Aliases("un", "del", "rm", "remove"),
-		flags.Description("uninstall portable app"),
+		cl.Aliases("un", "del", "rm", "remove"),
+		cl.Description("uninstall portable app"),
 		commandFlag,
-		flags.Run(func(c *cobra.Command, apps []string) {
+		cl.Run(func(c *cobra.Command, apps []string) {
 			if all {
 				apps = portable.FindDirs(cmp.Or(cmp.Or(apps...), "."), depth)
 			} else if len(apps) == 0 {
@@ -76,12 +76,12 @@ func main() {
 		}),
 	)
 
-	flags.AddCommand(
+	cl.AddCommand(
 		"list",
-		flags.Aliases("ls"),
-		flags.Description("list portable app"),
+		cl.Aliases("ls"),
+		cl.Description("list portable app"),
 		commandFlag,
-		flags.Run(func(c *cobra.Command, args []string) {
+		cl.Run(func(c *cobra.Command, args []string) {
 			args = portable.FindDirs(cmp.Or(cmp.Or(args...), "."), depth)
 			for _, arg := range args {
 				app, err := portable.LoadApp(arg)
@@ -94,5 +94,5 @@ func main() {
 		}),
 	)
 
-	flags.Execute()
+	cl.Execute()
 }
