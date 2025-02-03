@@ -20,11 +20,11 @@ func main() {
 		depth int = 3
 	)
 
-	commandFlag := flags.Flags(func(fs *flags.FlagSet) {
-		fs.BoolVarP(&force, "force", "f", false, "if true, force to del the bind target, if false, only del the symlink")
-		fs.BoolVarP(&all, "all", "a", false, "install all apps in the current directory")
-		fs.IntVar(&depth, "depth", depth, "depth of directory")
-	})
+	commandFlag := flags.Flags(
+		flags.Val(&force, "force", "f", "if true, force to del the bind target, if false, only del the symlink"),
+		flags.Val(&all, "all", "a", "install all apps in the current directory"),
+		flags.Val(&depth, "depth", "d", "depth of directory"),
+	)
 
 	flags.AddCommand(
 		"install",

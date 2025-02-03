@@ -1,7 +1,6 @@
 package flags
 
 import (
-	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -16,7 +15,6 @@ func init() {
 // Execute execute the root command
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		slog.Error("Error", "err", err)
 		os.Exit(1)
 	}
 }

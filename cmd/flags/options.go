@@ -2,10 +2,14 @@ package flags
 
 import (
 	"cmp"
+	"net"
+	"time"
 )
 
-// Option option
-type Option func(*Command)
+type (
+	Option     func(*Command) // Option option
+	FlagOption func(*FlagSet) // FlagOption flag option
+)
 
 // Options options
 func Options(options ...Option) Option {
@@ -62,6 +66,8 @@ func GroupID(groupID string) Option {
 	return func(c *Command) { c.GroupID = groupID }
 }
 
+func Hidden(hide bool) Option { return func(c *Command) { c.Hidden = hide } }
+
 // Deprecated defines, if this command is deprecated and should print this string when used.
 func Deprecated(deprecated string) Option {
 	return func(c *Command) { c.Deprecated = deprecated }
@@ -74,15 +80,94 @@ func Example(example string) Option {
 
 // Flags returns the complete FlagSet that applies
 // to this command (local and persistent declared here and by all parents).
-func Flags(set func(*FlagSet)) Option {
+func Flags(sets ...FlagOption) Option {
 	return func(c *Command) {
-		set(c.Flags())
+		for _, set := range sets {
+			set(c.Flags())
+		}
 	}
 }
 
 // PersistentFlags returns the persistent FlagSet specifically set in the current command.
-func PersistentFlags(set func(*FlagSet)) Option {
+func PersistentFlags(sets ...FlagOption) Option {
 	return func(c *Command) {
-		set(c.PersistentFlags())
+		for _, set := range sets {
+			set(c.PersistentFlags())
+		}
 	}
+}
+
+// Var is a helper function to add a variable to the flag set.
+func Var[T VarT](name, short string, val T, usage string) FlagOption {
+	return Val(&val, name, short, usage)
+}
+
+// Val is a helper function to add a variable to the flag set.
+func Val[T VarT](val *T, name, short string, usage string) FlagOption {
+	return func(fs *FlagSet) {
+		switch x := any(val).(type) {
+		case *bool:
+			fs.BoolVarP(x, name, short, *x, usage)
+		case *string:
+			fs.StringVarP(x, name, short, *x, usage)
+		case *int:
+			fs.IntVarP(x, name, short, *x, usage)
+		case *int8:
+			fs.Int8VarP(x, name, short, *x, usage)
+		case *int16:
+			fs.Int16VarP(x, name, short, *x, usage)
+		case *int32:
+			fs.Int32VarP(x, name, short, *x, usage)
+		case *int64:
+			fs.Int64VarP(x, name, short, *x, usage)
+		case *uint:
+			fs.UintVarP(x, name, short, *x, usage)
+		case *uint8:
+			fs.Uint8VarP(x, name, short, *x, usage)
+		case *uint16:
+			fs.Uint16VarP(x, name, short, *x, usage)
+		case *uint32:
+			fs.Uint32VarP(x, name, short, *x, usage)
+		case *uint64:
+			fs.Uint64VarP(x, name, short, *x, usage)
+		case *float32:
+			fs.Float32VarP(x, name, short, *x, usage)
+		case *float64:
+			fs.Float64VarP(x, name, short, *x, usage)
+		case *net.IP:
+			fs.IPVarP(x, name, short, *x, usage)
+		case *time.Duration:
+			fs.DurationVarP(x, name, short, *x, usage)
+		case *[]bool:
+			fs.BoolSliceVarP(x, name, short, *x, usage)
+		case *[]string:
+			fs.StringSliceVarP(x, name, short, *x, usage)
+		case *[]int:
+			fs.IntSliceVarP(x, name, short, *x, usage)
+		case *[]int32:
+			fs.Int32SliceVarP(x, name, short, *x, usage)
+		case *[]int64:
+			fs.Int64SliceVarP(x, name, short, *x, usage)
+		case *[]uint:
+			fs.UintSliceVarP(x, name, short, *x, usage)
+		case *[]float32:
+			fs.Float32SliceVarP(x, name, short, *x, usage)
+		case *[]float64:
+			fs.Float64SliceVarP(x, name, short, *x, usage)
+		case *[]net.IP:
+			fs.IPSliceVarP(x, name, short, *x, usage)
+		case *[]time.Duration:
+			fs.DurationSliceVarP(x, name, short, *x, usage)
+		}
+	}
+}
+
+// VarT is the type of the variable to be added to the flag set.
+type VarT interface {
+	int8 |
+		int16 | uint8 | uint16 | uint32 | uint64 |
+
+		bool | string | int | int32 | int64 | uint | float32 | float64 | time.Duration | net.IP |
+
+		[]bool | []string | []int | []int32 | []int64 | []uint | []float32 | []float64 | []time.Duration | []net.IP
 }
