@@ -1,2 +1,2 @@
 install::
-	go build -trimpath -ldflags '-s -w' -o D:\Services\bin\mkp.exe -v ./cmd/mkp
+	go build -trimpath -ldflags '-s -w' -o D:/bin/mkp.exe -v ./cmd/mkp

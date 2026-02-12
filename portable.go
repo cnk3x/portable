@@ -2,7 +2,9 @@ package portable
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -12,74 +14,242 @@ import (
 	"strings"
 
 	"github.com/adrg/xdg"
-	"github.com/cnk3x/portable/pkg/files"
-	"github.com/cnk3x/portable/pkg/it"
-	"github.com/cnk3x/portable/pkg/shortcuts"
-	"github.com/goccy/go-yaml"
+	"github.com/go-ole/go-ole"
+	"github.com/go-ole/go-ole/oleutil"
+	"github.com/tidwall/jsonc"
 	"github.com/valyala/fasttemplate"
+	"go.yaml.in/yaml/v4"
 )
 
 const CONFIG_FILE_NAME = "portable.yaml"
+const CONFIG_NAME = "portable"
 
-// FindDirs finds the directory that contains a portable.yaml file.
-func FindDirs(root string, depth int) (dirs []string) {
-	_ = files.WalkDir(root, func(path string, d fs.DirEntry, e error) (err error) {
+// LoadApps finds the directory that contains a portable.yaml file.
+func LoadApps(root string, maxDepth int) (apps []*PortableApp) {
+	root, _ = filepath.Abs(root)
+
+	filepath.WalkDir(root, func(path string, d fs.DirEntry, e error) (err error) {
 		if err = e; err != nil {
-			return
+			slog.Debug("读取路径失败", "path", path, "err", err)
+			return nil
 		}
 
-		if d.IsDir() {
-			if stat, e := os.Stat(filepath.Join(path, CONFIG_FILE_NAME)); e == nil && stat.Mode().IsRegular() {
-				dirs = append(dirs, path)
+		if !d.IsDir() {
+			return nil
+		}
+
+		if strings.HasPrefix(d.Name(), ".") || strings.HasPrefix(d.Name(), "_") || strings.HasPrefix(d.Name(), "~") {
+			return fs.SkipDir
+		}
+
+		if rel, _ := filepath.Rel(root, path); rel != "." {
+			depth := strings.Count(rel, string(filepath.Separator)) + 1
+			if depth > maxDepth {
+				return fs.SkipDir
 			}
 		}
 
+		if d.IsDir() {
+			if app, e := LoadApp(path); e == nil {
+				apps = append(apps, app)
+			}
+		}
 		return
-	}, depth)
+	})
+	return
+}
+
+// LoadApp load app config
+func LoadApp(dir string) (app *PortableApp, err error) {
+	app = &PortableApp{}
+	app.root, _ = filepath.Abs(dir)
+
+	for _, ext := range []string{".json", ".jsonc", ".yaml", ".yml"} {
+		app.configPath = filepath.Join(app.root, CONFIG_NAME+ext)
+		if err = unmarshalFile(app.configPath, app); !os.IsNotExist(err) {
+			return
+		}
+	}
+
+	if err != nil {
+		return
+	}
+
+	if app.Name == "" {
+		app.Name = filepath.Base(app.root)
+	}
+
+	slog.Info("binds", "name", app.Name, "len", len(app.Bind))
+
+	// xDictRepl := newXDictRepl(xDict)
+
+	// for i := range app.Bind {
+	// 	slog.Info(app.Name, "name1", app.Bind[i].Name)
+	// 	app.Bind[i].Name = app.Abs(xDictRepl(app.Bind[i].Name))
+	// 	slog.Info(app.Name, "name2", app.Bind[i].Name)
+	// 	slog.Info(app.Name, "Target1", app.Bind[i].Target)
+	// 	app.Bind[i].Target = app.Abs(xDictRepl(app.Bind[i].Target))
+	// 	slog.Info(app.Name, "Target2", app.Bind[i].Target)
+	// }
+
 	return
 }
 
 // PortableApp struct
 type PortableApp struct {
-	Name     string                `json:"name"`
-	Bind     []string              `json:"bind"`
-	Shortcut []*shortcuts.Shortcut `json:"shortcut"`
+	Name string  `json:"name"`
+	Bind []*Bind `json:"bind"`
 
 	configPath string
-	binds      [][2]string //[source, link]
+	root       string
 }
 
-// LoadApp load app config
-func LoadApp(configPath string) (app *PortableApp, err error) {
-	app = &PortableApp{configPath: configPath}
+type Bind struct {
+	Action string `json:"action"`
+	Name   string `json:"name"`
+	Target string `json:"target"`
+}
 
-	if app.configPath, err = filepath.Abs(cmp.Or(app.configPath, ".")); err != nil {
+func (app *PortableApp) Abs(path string) string {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(app.root, path)
+}
+
+func (app *PortableApp) ConfigPath() string { return app.configPath }
+
+// Install the app
+func (app *PortableApp) Install(dirtyRun bool) (err error) {
+	slog.Info("install", "name", app.Name)
+	xDictRepl := newXDictRepl(app.root)
+
+	for _, b := range app.Bind {
+		b.Name = xDictRepl(b.Name)
+		b.Target = xDictRepl(b.Target)
+		b.Name = app.Abs(b.Name)
+		b.Target = app.Abs(b.Target)
+
+		slog.Info("   bind", "action", b.Action, "name", b.Name, "target", b.Target)
+		if !dirtyRun {
+			if e := b.Create(); e != nil {
+				slog.Error("      -", "err", e)
+				err = errors.Join(err, e)
+			}
+		}
+	}
+	return
+}
+
+// Uninstall the app
+func (app *PortableApp) Uninstall(dirtyRun bool) (err error) {
+	slog.Info("uninstall", "name", app.Name)
+	for _, b := range app.Bind {
+		slog.Info("   remove", "name", b.Name)
+		slog.Info("        -", "action", "remove")
+		slog.Info("        -", "target", b.Target)
+		if e := os.Remove(b.Name); e != nil && !os.IsNotExist(e) {
+			slog.Error("        -", "err", e)
+			err = errors.Join(err, e)
+		}
+	}
+	return
+}
+
+func (b Bind) Create() (err error) {
+	if err = os.MkdirAll(filepath.Dir(b.Name), 0755); err != nil {
+		return
+	}
+	if err = os.Remove(b.Name); err != nil && !os.IsNotExist(err) {
+		return
+	}
+	switch b.Action {
+	case "shortcut":
+		return createShortcut(b.Target, b.Name)
+	default:
+		return os.Symlink(b.Target, b.Name)
+	}
+}
+
+// Create shortcuts
+func createShortcut(target, name string) (err error) {
+	if name == "" || target == "" {
+		return fmt.Errorf("name or target is empty")
+	}
+
+	if len(name) <= 4 || name[len(name)-4:] != ".lnk" {
+		name += ".lnk"
+	}
+	workdir := filepath.Dir(target)
+
+	// runtime.LockOSThread()
+	// defer runtime.UnlockOSThread()
+	//
+	if err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED|ole.COINIT_SPEED_OVER_MEMORY); err != nil {
+		return
+	}
+	defer ole.CoUninitialize()
+
+	var oleObj *ole.IUnknown
+	if oleObj, err = oleutil.CreateObject("WScript.Shell"); err != nil {
+		return
+	}
+	defer oleObj.Release()
+
+	ws, e := oleObj.QueryInterface(ole.IID_IDispatch)
+	if err = e; err != nil {
+		return
+	}
+	defer ws.Release()
+
+	oleV, e := oleutil.CallMethod(ws, "CreateShortcut", name)
+	if err = e; err != nil {
 		return
 	}
 
-	if s, e := os.Stat(app.configPath); e == nil && s.IsDir() {
-		app.configPath = filepath.Join(app.configPath, CONFIG_FILE_NAME)
+	disp := oleV.ToIDispatch()
+	defer disp.Release()
+
+	// // Shortcut is a shortcut.
+	// type Shortcut struct {
+	// 	Name        string `json:"name"`
+	// 	Target      string `json:"target"`
+	// 	Workdir     string `json:"workdir"`
+	// 	Args        string `json:"args"`
+	// 	Description string `json:"description"`
+	// 	Hotkey      string `json:"hotkey"`
+	// 	Style       string `json:"style"`
+	// 	Icon        string `json:"icon"`
+	// }
+
+	for _, props := range [][2]string{
+		{"TargetPath", target},
+		{"WorkingDirectory", workdir},
+		// {"Arguments", shortcut.Args},
+		// {"Description", shortcut.Description},
+		// {"Hotkey", shortcut.Hotkey},
+		// {"WindowStyle", shortcut.Style},
+		// {"IconLocation", shortcut.Icon},
+	} {
+		if k, v := props[0], props[1]; v != "" {
+			if _, err = oleutil.PutProperty(disp, k, v); err != nil {
+				return
+			}
+		}
 	}
 
-	var data []byte
-	if data, err = os.ReadFile(app.configPath); err != nil {
-		return
-	}
+	_, err = oleutil.CallMethod(disp, "Save")
+	return
+}
 
-	if err = yaml.UnmarshalWithOptions(data, app, yaml.UseJSONUnmarshaler()); err != nil {
-		return
-	}
-
-	if app.Name == "" {
-		app.Name = filepath.Base(filepath.Dir(app.configPath))
-	}
-
+// newXDictRepl: 变量替换
+func newXDictRepl(root string) func(s string) string {
 	var (
-		base    = filepath.Dir(app.configPath)
-		dataDir = filepath.Join(base, "Data")
+		base    = root
 		roaming = cmp.Or(xdg.DataDirs...)
 		start   = filepath.Join(roaming, "Microsoft", "Windows", "Start Menu", "PortableApps")
 		desktop = xdg.UserDirs.Desktop
+		// dataDir = filepath.Join(base, "Data")
 	)
 
 	xDict := [][2]string{
@@ -107,134 +277,6 @@ func LoadApp(configPath string) (app *PortableApp, err error) {
 	// 倒序
 	slices.SortStableFunc(xDict, func(a, b [2]string) int { return strings.Compare(b[1], a[1]) })
 
-	xDictRepl := newXDictRepl(xDict)
-
-	// 快捷方式
-	for i, item := range app.Shortcut {
-		app.Shortcut[i].Name = xDictRepl(item.Name)
-		app.Shortcut[i].Target = xDictRepl(item.Target)
-		app.Shortcut[i].Workdir = xDictRepl(item.Workdir)
-		app.Shortcut[i].Args = xDictRepl(item.Args)
-
-		if len(item.Place) > 0 {
-			it.ForIndex(item.Place, func(j int) { app.Shortcut[i].Place[j] = xDictRepl(item.Place[j]) })
-		} else {
-			app.Shortcut[i].Place = []string{base, desktop, filepath.Join(start, item.Category)}
-		}
-	}
-
-	// 绑定路径
-	targetPath := shortPath(xDict, dataDir)
-
-	// 绑定目录
-	for _, target := range app.Bind {
-		target = xDictRepl(target)
-		app.binds = append(app.binds, [2]string{targetPath(target), target})
-	}
-
-	return
-}
-
-// ConfigPath config file path
-func (app *PortableApp) ConfigPath() string { return app.configPath }
-
-// Install the app
-func (app *PortableApp) Install(force bool) (err error) {
-	err = errors.Join(err, createSymlinks(app.binds, force))     // 绑定目录
-	err = errors.Join(err, createShortcuts(app.Shortcut, force)) // 创建快捷方式
-	return
-}
-
-// Uninstall the app
-func (app *PortableApp) Uninstall(force bool) (err error) {
-	err = errors.Join(err, removeSymlinks(app.binds, force))     // 移除绑定链接
-	err = errors.Join(err, removeShortcuts(app.Shortcut, force)) // 移除快捷方式
-	return
-}
-
-// createSymlinks create symlinks
-func createSymlinks(symlinks [][2]string, force bool) (err error) {
-	for _, symlink := range symlinks {
-		source, link := symlink[0], symlink[1]
-		e := files.CreateSymlink(source, link, force, true)
-		if e != nil {
-			slog.Error("linkbind", "link", link)
-			slog.Error("       -", "source", source)
-			slog.Error("       -", "err", e)
-		} else {
-			slog.Debug("linkbind", "link", link)
-			slog.Debug("       -", "source", source)
-		}
-		err = errors.Join(err, e)
-	}
-	return
-}
-
-// removeSymlinks remove symlinks
-func removeSymlinks(symlinks [][2]string, force bool) (err error) {
-	for _, symlink := range symlinks {
-		link := symlink[1]
-		e := files.RemoveSymlink(link, force)
-		if err = errors.Join(err, e); e != nil {
-			slog.Error("remove linkbind", "path", link)
-			slog.Error("               -", "err", e)
-		} else {
-			slog.Debug("remove linkbind", "path", link)
-		}
-	}
-	return
-}
-
-// createShortcuts create shortcuts
-func createShortcuts(items []*shortcuts.Shortcut, _ bool) (err error) {
-	return shortcuts.Create(items, func(shortcut *shortcuts.Shortcut, path string, err error) {
-		if err != nil {
-			slog.Error("shortcut", "Path", path)
-			slog.Error("       -", "Target", shortcut.Target)
-			if shortcut.Args != "" {
-				slog.Error("       -", "Args", shortcut.Args)
-			}
-			slog.Error("       -", "Workdir", shortcut.Workdir)
-			slog.Error("       -", "err", err)
-		} else {
-			slog.Debug("shortcut", "Path", path)
-			slog.Debug("       -", "Target", shortcut.Target)
-			if shortcut.Args != "" {
-				slog.Debug("       -", "Args", shortcut.Args)
-			}
-			slog.Debug("       -", "Workdir", shortcut.Workdir)
-		}
-	})
-}
-
-// removeShortcuts remove shortcuts
-func removeShortcuts(items []*shortcuts.Shortcut, force bool) (err error) {
-	return shortcuts.Remove(items, func(shortcut *shortcuts.Shortcut, path string, e error) {
-		if e != nil {
-			slog.Error("remove shortcut", "path", path)
-			slog.Error("               -", "err", e)
-		} else {
-			slog.Debug("remove shortcut", "path", path)
-		}
-	}, force)
-}
-
-// shortPath 替换路径为前缀代号
-func shortPath(xDict [][2]string, root string) func(fullPath string) string {
-	return func(fullPath string) string {
-		var name, rel string
-		if i := slices.IndexFunc(xDict, func(item [2]string) bool { return hasPrefixFold(fullPath, item[1]) }); i >= 0 {
-			name, rel = xDict[i][0], strings.Trim(fullPath[len(xDict[i][1]):], `\/`)
-		} else {
-			dir, fn := filepath.Split(fullPath)
-			name, rel = filepath.Base(dir), fn
-		}
-		return filepath.Join(root, name, rel)
-	}
-}
-
-// newXDictRepl: 变量替换
-func newXDictRepl(xDict [][2]string) func(s string) string {
 	tagFind := func(tag string) func(item [2]string) bool {
 		return func(item [2]string) bool { return strings.EqualFold(tag, item[0]) }
 	}
@@ -251,7 +293,41 @@ func newXDictRepl(xDict [][2]string) func(s string) string {
 	}
 }
 
-// hasPrefixFold: 不区分大小写的 strings.HasPrefix
-func hasPrefixFold(s string, prefix string) bool {
-	return len(s) >= len(prefix) && strings.EqualFold(s[0:len(prefix)], prefix)
+func unmarshalFile(path string, v any) (err error) {
+	data, e := os.ReadFile(path)
+	if err = e; err != nil {
+		return
+	}
+
+	switch ext := strings.ToLower(filepath.Ext(path)); ext {
+	case ".json", ".jsonc":
+		data = jsonc.ToJSONInPlace(data)
+	case ".yaml", ".yml":
+		var tmp any
+		if err = yaml.Unmarshal(data, &tmp); err != nil {
+			return
+		}
+		if data, err = json.Marshal(tmp); err != nil {
+			return
+		}
+	default:
+		err = fmt.Errorf("unsupported file type: %s", ext)
+		return
+	}
+
+	if err = json.Unmarshal(data, v); err != nil {
+		return
+	}
+
+	if rawSet, ok := v.(interface{ setRaw(raw json.RawMessage) }); ok {
+		rawSet.setRaw(data)
+	}
+	return
 }
+
+// func iif[T any](c bool, t, f T) T {
+// 	if c {
+// 		return t
+// 	}
+// 	return f
+// }

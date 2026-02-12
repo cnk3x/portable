@@ -17,3 +17,6 @@ indent_size = 4
 
 [go.{mod,work}]
 indent_size = 4
+
+[*.go]
+indent_size = 4

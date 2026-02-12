@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"log/slog"
 
 	"github.com/cnk3x/cl"
@@ -15,39 +14,40 @@ func main() {
 	cl.RootSet(cl.Description("manage portable app"))
 
 	var (
-		force bool
+		dirty bool
 		all   bool
 		depth int = 3
 	)
 
 	commandFlag := cl.Flags(
-		cl.Val(&force, "force", "f", "if true, force to del the bind target, if false, only del the symlink"),
 		cl.Val(&all, "all", "a", "install all apps in the current directory"),
-		cl.Val(&depth, "depth", "d", "depth of directory"),
+		cl.Val(&depth, "depth", "", "depth of directory"),
+		cl.Val(&dirty, "dirty", "", "dirty run"),
 	)
+
+	loadApps := func(args []string, all bool, depth int) (apps []*portable.PortableApp) {
+		if len(args) == 0 {
+			args = append(args, ".")
+		}
+		if !all {
+			depth = 0
+		}
+		for _, a := range args {
+			apps = append(apps, portable.LoadApps(a, depth)...)
+		}
+		return
+	}
 
 	cl.AddCommand(
 		"install",
 		cl.Aliases("i", "add"),
 		cl.Description("install portable app"),
 		commandFlag,
-		cl.Run(func(c *cobra.Command, apps []string) {
-			if all {
-				apps = portable.FindDirs(cmp.Or(cmp.Or(apps...), "."), depth)
-			} else if len(apps) == 0 {
-				apps = append(apps, ".")
+		cl.Run(func(c *cobra.Command, args []string) (err error) {
+			for _, app := range loadApps(args, all, depth) {
+				app.Install(dirty)
 			}
-
-			for _, arg := range apps {
-				slog.Info("install ", "path", arg)
-				app, err := portable.LoadApp(arg)
-				if err == nil {
-					err = app.Install(force)
-				}
-				if err != nil {
-					slog.Error("install ", "err", err)
-				}
-			}
+			return
 		}),
 	)
 
@@ -56,22 +56,9 @@ func main() {
 		cl.Aliases("un", "del", "rm", "remove"),
 		cl.Description("uninstall portable app"),
 		commandFlag,
-		cl.Run(func(c *cobra.Command, apps []string) {
-			if all {
-				apps = portable.FindDirs(cmp.Or(cmp.Or(apps...), "."), depth)
-			} else if len(apps) == 0 {
-				apps = append(apps, ".")
-			}
-
-			for _, arg := range apps {
-				slog.Info("uninstall", "path", arg)
-				app, err := portable.LoadApp(arg)
-				if err == nil {
-					err = app.Uninstall(force)
-				}
-				if err != nil {
-					slog.Error("uninstall", "err", err)
-				}
+		cl.Run(func(c *cobra.Command, args []string) {
+			for _, app := range loadApps(args, all, depth) {
+				app.Uninstall(dirty)
 			}
 		}),
 	)
@@ -82,14 +69,8 @@ func main() {
 		cl.Description("list portable app"),
 		commandFlag,
 		cl.Run(func(c *cobra.Command, args []string) {
-			args = portable.FindDirs(cmp.Or(cmp.Or(args...), "."), depth)
-			for _, arg := range args {
-				app, err := portable.LoadApp(arg)
-				if err != nil {
-					slog.Error(arg, "err", err)
-				} else {
-					slog.Info(runewidth.FillRight(app.Name, 16), "path", app.ConfigPath())
-				}
+			for _, app := range loadApps(args, all, depth) {
+				slog.Info(runewidth.FillRight(app.Name, 16), "path", app.ConfigPath())
 			}
 		}),
 	)
