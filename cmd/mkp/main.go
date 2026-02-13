@@ -2,15 +2,28 @@ package main
 
 import (
 	"log/slog"
+	"os"
+	"time"
 
 	"github.com/cnk3x/cl"
 	"github.com/cnk3x/portable"
+	"github.com/lmittmann/tint"
 
+	"github.com/mattn/go-isatty"
 	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 )
 
 func main() {
+	slog.SetDefault(slog.New(
+		tint.NewHandler(os.Stderr, &tint.Options{
+			Level:      slog.LevelDebug,
+			TimeFormat: time.TimeOnly,
+			NoColor:    !isatty.IsTerminal(os.Stderr.Fd()),
+			AddSource:  false,
+		}),
+	))
+
 	cl.RootSet(cl.Description("manage portable app"))
 
 	var (
@@ -25,17 +38,16 @@ func main() {
 		cl.Val(&dirty, "dirty", "", "dirty run"),
 	)
 
-	loadApps := func(args []string, all bool, depth int) (apps []*portable.PortableApp) {
+	loadApps := func(args []string, all bool, depth int) []*portable.PortableApp {
 		if len(args) == 0 {
 			args = append(args, ".")
 		}
+
 		if !all {
 			depth = 0
 		}
-		for _, a := range args {
-			apps = append(apps, portable.LoadApps(a, depth)...)
-		}
-		return
+
+		return portable.FindApps(args, depth)
 	}
 
 	cl.AddCommand(
